@@ -1,0 +1,83 @@
+# Step : Install dependencies (run once per session)
+!pip install pyswarm yfinance --quiet
+
+# Step 1: Import Libraries
+import numpy as np
+import pandas as pd
+import yfinance as yf
+from pyswarm import pso
+import matplotlib.pyplot as plt
+
+#Step 2: Fetch stock data safely
+def fetch_data(tickers, start='2022-01-01', end='2023-01-01'):
+    data = yf.download(tickers, start=start, end=end)
+    if 'Adj Close' in data.columns:
+        data = data['Adj Close']
+    elif 'Close' in data.columns:
+        data = data['Close']
+    else:
+        raise ValueError("No 'Close' or 'Adj Close' found in downloaded data.")
+    return data.dropna()
+
+#Step 3: Portfolio utility functions
+def portfolio_return(weights, mean_returns):
+    return np.dot(weights, mean_returns)
+
+def portfolio_volatility(weights, cov_matrix):
+    return np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+
+def neg_sharpe_ratio(weights, mean_returns, cov_matrix, risk_free_rate=0.01):
+    ret = portfolio_return(weights, mean_returns)
+    vol = portfolio_volatility(weights, cov_matrix)
+    return -(ret - risk_free_rate) / vol
+
+#Step 4: Constraint function (modified for PSO)
+def constraint(weights, *args):
+    return np.sum(weights) - 1
+
+#Step 5: PSO optimizer
+def optimize_portfolio(mean_returns, cov_matrix, num_assets):
+    lb = [0] * num_assets  # Lower bounds for weights
+    ub = [1] * num_assets  # Upper bounds for weights
+    optimal_weights, _ = pso(
+        neg_sharpe_ratio, lb, ub,
+        args=(mean_returns, cov_matrix),
+        ieqcons=[constraint],
+        swarmsize=100,
+        maxiter=200,
+        debug=False
+    )
+    return optimal_weights
+
+#Step 6: Main execution
+tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN']
+data = fetch_data(tickers)
+
+#Caalculate daily returns
+returns = data.pct_change().dropna()
+mean_returns = returns.mean()
+cov_matrix = returns.cov()
+
+#Optimize portfolio
+optimal_weights = optimize_portfolio(mean_returns, cov_matrix, len(tickers))
+
+#Evaluate optimized portfolio
+ann_return = portfolio_return(optimal_weights, mean_returns) * 252
+ann_vol = portfolio_volatility(optimal_weights, cov_matrix) * np.sqrt(252)
+sharpe = -(neg_sharpe_ratio(optimal_weights, mean_returns, cov_matrix))
+
+# Step 7: Show results
+print("\n Optimal Portfolio Allocation:")
+for ticker, weight in zip(tickers, optimal_weights):
+    print(f"{ticker}: {weight:.2%}")
+
+print(f"\n Expected Annual Return: {ann_return:.2%}")
+print(f" Annual Volatility: {ann_vol:.2%}")
+print(f" Sharpe Ratio: {sharpe:.2f}")
+
+# Step 8: Plot allocation
+plt.figure(figsize=(6,6))
+plt.pie(optimal_weights, labels=tickers, autopct='%1.1f%%', startangle=140)
+plt.title("Optimal Portfolio Allocation")
+plt.axis('equal')
+plt.show()
